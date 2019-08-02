@@ -65,7 +65,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
      */
     private fun createAndInitAdapter() {
         if (::currAdapter.isInitialized) return
-        currAdapter = SimpleBannerAdapter(context, dataList, getRealScaleType(), itemListener)
+        currAdapter = SimpleBannerAdapter(context, dataList, getRealScaleType())
         adapter = currAdapter
     }
 
@@ -83,7 +83,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
     }
 
-    private  fun cancelKotlinJob(job: Job?) {
+    private fun cancelKotlinJob(job: Job?) {
         if (job != null && !job.isCancelled) {
             job.cancel()
         }
@@ -132,7 +132,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
      * 开启自滚
      */
     fun startAutoScroll() {
-        cancelKotlinJob(delayScrollJob)
+         cancelKotlinJob(delayScrollJob)
         delayScrollJob = GlobalScope.launch {
             if (dataList.size <= 1 || !isAutoScroll) {
                 return@launch
@@ -190,13 +190,14 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     fun setOnBannerItemListener(listener: OnBannerItemListener) {
         this.itemListener = listener
+        currAdapter.setOnItemClickListener(itemListener)
     }
 
     /**
      * 可自定义速度的滑动器
      */
     inner class CustomLayoutManager(context: Context, orientation: Int, reverseLayout: Boolean) :
-            LinearLayoutManager(context, orientation, reverseLayout) {
+        LinearLayoutManager(context, orientation, reverseLayout) {
 
         override fun smoothScrollToPosition(recyclerView: RecyclerView, state: State, position: Int) {
             val linearSmoothScroller = createLinearSmoothScroller(recyclerView.context)
@@ -234,11 +235,12 @@ object BannerConfig {
  * 默认Adapter
  */
 private class SimpleBannerAdapter(
-        val context: Context,
-        val dataList: ArrayList<Any>,
-        val scaleType: ImageView.ScaleType,
-        val itemListener: OnBannerItemListener? = null
+    val context: Context,
+    val dataList: ArrayList<Any>,
+    val scaleType: ImageView.ScaleType
 ) : RecyclerView.Adapter<SimpleBannerAdapter.SimpleViewHolder>() {
+
+    private var itemListener: OnBannerItemListener? = null
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): SimpleViewHolder {
         return SimpleViewHolder(createBannerImage())
@@ -271,10 +273,13 @@ private class SimpleBannerAdapter(
 
     private fun createBannerImage(): ImageView {
         val aiv = ImageView(context)
-        aiv.layoutParams =
-                ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        aiv.layoutParams = ViewGroup.LayoutParams(-1, -1)
         aiv.scaleType = scaleType
         return aiv
+    }
+
+    fun setOnItemClickListener(l: OnBannerItemListener?) {
+        this.itemListener = l
     }
 
     inner class SimpleViewHolder(val aiv: ImageView) : RecyclerView.ViewHolder(aiv)
