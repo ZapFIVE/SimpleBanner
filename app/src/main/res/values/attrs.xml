@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <declare-styleable name="CustomBanner">
+        <attr name="cb_auto_scroll" format="boolean" />
+        <attr name="cb_delay_time" format="integer" />
+        <attr name="cb_scroll_speed" format="float" />
+        <attr name="cb_default_image" format="reference" />
+        <attr name="cb_scale_type" format="enum">
+            <enum name="center" value="1" />
+            <enum name="center_crop" value="2" />
+            <enum name="center_inside" value="3" />
+            <enum name="fit_xy" value="4" />
+            <enum name="fit_center" value="5" />
+        </attr>
+    </declare-styleable>
+</resources>
