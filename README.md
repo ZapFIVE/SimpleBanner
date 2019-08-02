@@ -7,4 +7,4 @@ A Banner library inherited from recyclerview
 > 
 > 自带默认图片，防止设定空的图片集合！！
 
-![模拟如下](D:\Workplace\SimpleBanner\show\raw.gif)
+![模拟如下](https://github.com/ZapFIVE/SimpleBanner/blob/master/show/raw.gif)
