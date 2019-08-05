@@ -1,6 +1,8 @@
 package com.wz.five.banner
 
 import android.content.Context
+import android.os.Handler
+import android.os.Message
 import android.support.annotation.DrawableRes
 import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.LinearSmoothScroller
@@ -15,7 +17,7 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.Scroller
 import com.bumptech.glide.Glide
-import kotlinx.coroutines.*
+import java.lang.ref.WeakReference
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -36,8 +38,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     private val dataList = ArrayList<Any>()//加载图片的path、url、resourceId
     private lateinit var currAdapter: SimpleBannerAdapter//适配器
-    private var delayScrollJob: Job? = null
     private var itemListener: OnBannerItemListener? = null
+    private val bannerHandler = BannerHandler(this)
 
     init {
         val a = context.obtainStyledAttributes(attrs, R.styleable.CustomBanner, defStyleAttr, 0)
@@ -80,12 +82,6 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             4 -> ImageView.ScaleType.FIT_XY
             5 -> ImageView.ScaleType.FIT_CENTER
             else -> ImageView.ScaleType.CENTER_CROP
-        }
-    }
-
-    private fun cancelKotlinJob(job: Job?) {
-        if (job != null && !job.isCancelled) {
-            job.cancel()
         }
     }
 
@@ -132,25 +128,15 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
      * 开启自滚
      */
     fun startAutoScroll() {
-         cancelKotlinJob(delayScrollJob)
-        delayScrollJob = GlobalScope.launch {
-            if (dataList.size <= 1 || !isAutoScroll) {
-                return@launch
-            }
-            while (isActive) {
-                delay(delayTime.toLong())
-                withContext(Dispatchers.Main) {
-                    smoothScrollToPosition(getRealPosition() + 1)
-                }
-            }
-        }
+        bannerHandler.removeCallbacksAndMessages(null)
+        bannerHandler.sendEmptyMessageDelayed(0, delayTime.toLong())
     }
 
     /**
      * 停止自滚
      */
     fun stopAutoScroll() {
-        cancelKotlinJob(delayScrollJob)
+        bannerHandler.removeCallbacksAndMessages(null)
     }
 
     /**
@@ -193,6 +179,14 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         currAdapter.setOnItemClickListener(itemListener)
     }
 
+    fun isNeedAutoScroll(): Boolean {
+        return dataList.size > 1 && isAutoScroll
+    }
+
+    fun getScrollDelayTime(): Int {
+        return delayTime
+    }
+
     /**
      * 可自定义速度的滑动器
      */
@@ -212,12 +206,23 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     //取值范围限定在（10-40）
                     return (10 + (1.0f - scrollSpeed) * 30) / displayMetrics.densityDpi
                 }
-
-                override fun calculateTimeForScrolling(dx: Int): Int {
-                    return max(100, super.calculateTimeForScrolling(dx))
-                }
             }
         }
+    }
+}
+
+/**
+ * 自动Handler
+ */
+internal class BannerHandler(banner: CustomBanner) : Handler() {
+    private val reference = WeakReference(banner)
+
+    override fun handleMessage(msg: Message) {
+        if (msg.what != 0) return
+        val banner = reference.get() ?: return
+        if (!banner.isNeedAutoScroll()) return
+        banner.smoothScrollToPosition(banner.getRealPosition() + 1)
+        sendEmptyMessageDelayed(0, banner.getScrollDelayTime().toLong())
     }
 }
 
