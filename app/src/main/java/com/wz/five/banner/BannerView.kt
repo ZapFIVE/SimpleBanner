@@ -1,8 +1,6 @@
 package com.wz.five.banner
 
 import android.content.Context
-import android.os.Handler
-import android.os.Message
 import android.support.annotation.DrawableRes
 import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.LinearSmoothScroller
@@ -13,11 +11,9 @@ import android.util.DisplayMetrics
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
-import android.widget.Scroller
 import com.bumptech.glide.Glide
-import java.lang.ref.WeakReference
+import kotlinx.coroutines.*
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -39,7 +35,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     private val dataList = ArrayList<Any>()//加载图片的path、url、resourceId
     private lateinit var currAdapter: SimpleBannerAdapter//适配器
     private var itemListener: OnBannerItemListener? = null
-    private val bannerHandler = BannerHandler(this)
+    private var handleScrollJob: Job? = null
 
     init {
         val a = context.obtainStyledAttributes(attrs, R.styleable.CustomBanner, defStyleAttr, 0)
@@ -50,16 +46,18 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         scaleType = a.getInt(R.styleable.CustomBanner_cb_scale_type, BannerConfig.IMAGE_SCALE_TYPE)
         a.recycle()
 
+        dataList.add(defaultImage)
+
         setHasFixedSize(true)//确定大小，避免重新绘制
         overScrollMode = OVER_SCROLL_NEVER//去除滚动条
         scrollBarSize = 0
 
         layoutManager = CustomLayoutManager(context, HORIZONTAL, false)
-        createAndInitAdapter()
 
         //自动回滚之中心位置
         BannerSnapHelper().attachToRecyclerView(this)
 
+        createAndInitAdapter()
     }
 
     /**
@@ -128,15 +126,29 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
      * 开启自滚
      */
     fun startAutoScroll() {
-        bannerHandler.removeCallbacksAndMessages(null)
-        bannerHandler.sendEmptyMessageDelayed(0, delayTime.toLong())
+        cancelKotlinJob(handleScrollJob)
+        handleScrollJob = GlobalScope.launch {
+            while (isActive) {
+                if (!isNeedAutoScroll()) return@launch
+                delay(delayTime.toLong())
+                withContext(Dispatchers.Main) {
+                    smoothScrollToPosition(getRealPosition() + 1)
+                }
+            }
+        }
     }
 
     /**
      * 停止自滚
      */
     fun stopAutoScroll() {
-        bannerHandler.removeCallbacksAndMessages(null)
+        cancelKotlinJob(handleScrollJob)
+    }
+
+    private fun cancelKotlinJob(job: Job?) {
+        if (job != null && !job.isCancelled) {
+            job.cancel()
+        }
     }
 
     /**
@@ -146,7 +158,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         if (layoutManager !is LinearLayoutManager) {
             throw RuntimeException("current layoutManager must be LinearLayoutManager!!")
         }
-        return (layoutManager as LinearLayoutManager).findFirstCompletelyVisibleItemPosition()
+        return (layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
     }
 
     fun isAutoScroll(): Boolean {
@@ -212,21 +224,6 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 }
 
 /**
- * 自动Handler
- */
-internal class BannerHandler(banner: CustomBanner) : Handler() {
-    private val reference = WeakReference(banner)
-
-    override fun handleMessage(msg: Message) {
-        if (msg.what != 0) return
-        val banner = reference.get() ?: return
-        if (!banner.isNeedAutoScroll()) return
-        banner.smoothScrollToPosition(banner.getRealPosition() + 1)
-        sendEmptyMessageDelayed(0, banner.getScrollDelayTime().toLong())
-    }
-}
-
-/**
  * Banner默认配置
  */
 object BannerConfig {
@@ -251,7 +248,7 @@ private class SimpleBannerAdapter(
         return SimpleViewHolder(createBannerImage())
     }
 
-    override fun getItemCount() = if (dataList.size > 1) dataList.size + 2 else 1
+    override fun getItemCount() = if (dataList.size > 1) dataList.size + 2 else dataList.size
 
     override fun onBindViewHolder(holder: SimpleViewHolder, position: Int) {
         val rightPosition = getRightPosition(position)
@@ -312,7 +309,6 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
     private lateinit var recyclerView: CustomBanner
     private var horizontalHelper: OrientationHelper? = null
     private var verticalHelper: OrientationHelper? = null
-    private lateinit var gravityScroller: Scroller
     private var scrollListener = object : RecyclerView.OnScrollListener() {
 
         var isScrolled = false
@@ -322,14 +318,8 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
                 if (isScrolled) {
                     isScrolled = false
                     snapToTargetExistingView()
-                }
-                val currentItem = recyclerView.getRealPosition()
-                val count = recyclerView.adapter?.itemCount ?: 0
-                if (count < 1) return
-                if (currentItem == count - 1) {
-                    recyclerView.scrollToPosition(1)
-                } else if (currentItem == 0) {
-                    recyclerView.scrollToPosition(count - 2)
+                } else {
+                    scrollToRealPosition()
                 }
             }
         }
@@ -341,32 +331,38 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
         }
     }
 
+    private fun scrollToRealPosition() {
+        val count = recyclerView.adapter?.itemCount ?: 0
+        if (count <= 1) return
+        when (recyclerView.getRealPosition()) {
+            0 -> recyclerView.scrollToPosition(count - 2)
+            count - 1 -> recyclerView.scrollToPosition(1)
+        }
+    }
+
     @Throws(IllegalStateException::class)
     fun attachToRecyclerView(rv: CustomBanner?) {
+        if (::recyclerView.isInitialized && recyclerView == rv) return
         if (::recyclerView.isInitialized) {
-            if (recyclerView == rv) return
             destroyCallbacks()
-        } else {
-            if (rv == null) return
-            this.recyclerView = rv
-            setupCallbacks()
-            gravityScroller = Scroller(recyclerView.context, DecelerateInterpolator())
-            snapToTargetExistingView()
         }
+        if (rv == null) return
+        recyclerView = rv
+        setupCallbacks()
+        snapToTargetExistingView()
     }
 
     @Throws(IllegalStateException::class)
     private fun setupCallbacks() {
         if (this.recyclerView.onFlingListener != null) {
             throw IllegalStateException("An instance of OnFlingListener already set.")
-        } else {
-            this.recyclerView.addOnScrollListener(this.scrollListener)
-            this.recyclerView.onFlingListener = this
         }
+        this.recyclerView.addOnScrollListener(scrollListener)
+        this.recyclerView.onFlingListener = this
     }
 
     private fun destroyCallbacks() {
-        this.recyclerView.removeOnScrollListener(this.scrollListener)
+        this.recyclerView.removeOnScrollListener(scrollListener)
         this.recyclerView.onFlingListener = null
     }
 
@@ -374,11 +370,12 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
      * 滑动到中间停止时的回调
      */
     protected open fun onSnap(snapView: View) {
+        scrollToRealPosition()
     }
 
     override fun onFling(velocityX: Int, velocityY: Int): Boolean {
         val lm = recyclerView.layoutManager ?: return false
-        recyclerView.adapter ?: return false
+        if (recyclerView.adapter == null) return false
         val minFlingVelocity = recyclerView.minFlingVelocity
         return (abs(velocityY) > minFlingVelocity || abs(velocityX) > minFlingVelocity)
                 && snapFromFling(lm, velocityX, velocityY)
@@ -442,7 +439,7 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
      * 计算到中心点距离
      */
     private fun distanceToCenter(lm: RecyclerView.LayoutManager, targetView: View, helper: OrientationHelper): Int {
-        val childCenter = helper.getDecoratedStart(targetView) + helper.getDecoratedMeasurement(targetView) / 2
+        val childCenter = helper.getDecoratedStart(targetView) + (helper.getDecoratedMeasurement(targetView) / 2)
         val containerCenter = if (lm.clipToPadding) {
             helper.startAfterPadding + helper.totalSpace / 2
         } else {
@@ -478,14 +475,20 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
         val itemCount = lm.itemCount
         if (itemCount == 0) return RecyclerView.NO_POSITION
 
-        val mostStartChild = (if (lm.canScrollVertically()) {
-            findStartView(lm, getVerticalHelper(lm))
-        } else {
-            findStartView(lm, getHorizontalHelper(lm))
-        }) ?: return RecyclerView.NO_POSITION
+        var startMostChildView: View? = null
+        if (lm.canScrollVertically()) {
+            startMostChildView = findStartView(lm, getVerticalHelper(lm))
+        } else if (lm.canScrollHorizontally()) {
+            startMostChildView = findStartView(lm, getHorizontalHelper(lm))
+        }
+        if (startMostChildView == null) {
+            return RecyclerView.NO_POSITION
+        }
 
-        val centerPosition = lm.getPosition(mostStartChild)
-        if (centerPosition == RecyclerView.NO_POSITION) return RecyclerView.NO_POSITION
+        val centerPosition = lm.getPosition(startMostChildView)
+        if (centerPosition == RecyclerView.NO_POSITION) {
+            return RecyclerView.NO_POSITION
+        }
 
         val forwardDirection = if (lm.canScrollHorizontally()) {
             velocityX > 0
@@ -544,15 +547,12 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
      * 查找滑动的View
      */
     private fun findSnapView(lm: RecyclerView.LayoutManager): View? {
-        return if (lm.canScrollVertically()) {
-            findCenterView(lm, getVerticalHelper(lm))
-        } else {
-            if (lm.canScrollHorizontally()) {
-                findCenterView(lm, getHorizontalHelper(lm))
-            } else {
-                null
-            }
+        if (lm.canScrollVertically()) {
+            return findCenterView(lm, getVerticalHelper(lm))
+        } else if (lm.canScrollHorizontally()) {
+            return findCenterView(lm, getHorizontalHelper(lm))
         }
+        return null
     }
 
     /**
@@ -570,7 +570,7 @@ open class BannerSnapHelper : RecyclerView.OnFlingListener() {
         var absClosest = Int.MAX_VALUE
         for (index in 0 until childCount) {
             val child = lm.getChildAt(index)
-            val childCenter = helper.getDecoratedStart(child) + helper.getDecoratedMeasurement(child) / 2
+            val childCenter = helper.getDecoratedStart(child) + (helper.getDecoratedMeasurement(child) / 2)
             val absDistance = abs(childCenter - center)
             if (absDistance < absClosest) {
                 absClosest = absDistance
